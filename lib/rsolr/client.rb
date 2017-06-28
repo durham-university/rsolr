@@ -60,7 +60,6 @@ class RSolr::Client
   def paginate page, per_page, path, opts = nil
     opts ||= {}
     opts[:params] ||= {}
-    raise "'rows' or 'start' params should not be set when using +paginate+" if ["start", "rows"].include?(opts[:params].keys)
     execute build_paginated_request(page, per_page, path, opts)
   end
 
@@ -238,11 +237,17 @@ class RSolr::Client
   end
 
   def build_paginated_request page, per_page, path, opts
+    opts = opts.dup
+    opts[:params] = opts[:params].dup
     per_page = per_page.to_s.to_i
     page = page.to_s.to_i-1
     page = page < 1 ? 0 : page
-    opts[:params]["start"] = page * per_page
-    opts[:params]["rows"] = per_page
+    offset = (opts[:params].delete(:start) || opts[:params].delete('start')).to_s.to_i
+    limit = opts[:params].delete(:rows) || opts[:params].delete('rows')
+    limit = limit.nil? || limit == '' ? nil : limit.to_s.to_i
+    opts[:params]["start"] = offset + page * per_page
+    opts[:params]["rows"] = limit.nil? ? per_page : [per_page, limit - page * per_page].min
+    opts[:pagination] = { per_page: per_page, page: page, offset: offset, limit: limit}
     build_request path, opts
   end
 

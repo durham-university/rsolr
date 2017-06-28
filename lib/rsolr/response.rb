@@ -13,9 +13,11 @@ module RSolr::Response
     self.merge!(result)
     if self["response"] && self["response"]["docs"].is_a?(::Array)
       docs = PaginatedDocSet.new(self["response"]["docs"])
-      docs.per_page = request[:params]["rows"]
-      docs.page_start = request[:params]["start"]
-      docs.page_total = self["response"]["numFound"].to_s.to_i
+      docs.per_page = (request[:pagination] || {})[:per_page] || request[:params]["rows"] || request[:params][:rows]
+      docs.solr_start = request[:params]["start"] || request[:params][:start]
+      docs.solr_total = self["response"]["numFound"].to_s.to_i
+      docs.pagination_offset = (request[:pagination] || {})[:offset]
+      docs.pagination_limit = (request[:pagination] || {})[:limit]
       self["response"]["docs"] = docs
     end
   end
@@ -43,24 +45,36 @@ module RSolr::Response
   # A response module which gets mixed into the solr ["response"]["docs"] array.
   class PaginatedDocSet < ::Array
 
-    attr_accessor :page_start, :per_page, :page_total
+    attr_accessor :solr_start, :per_page, :solr_total, :pagination_offset, :pagination_limit
+    
+    # Returns start row of current page. This is Solr start row possibly offset
+    # by the offset param.
+    def page_start
+      pagination_offset.nil? ? solr_start : solr_start - pagination_offset
+    end
+    
+    # Returns total number of rows for paging. This is total number of rows
+    # reported by Solr and limited by possible offset and limit params.
+    def page_total
+      offset_total = pagination_offset.nil? ? solr_total : solr_total - pagination_offset
+      pagination_limit.nil? ? offset_total : [offset_total, pagination_limit].min
+    end
+
     if not (Object.const_defined?("RUBY_ENGINE") and Object::RUBY_ENGINE=='rbx')
       alias_method(:start,:page_start)
-      alias_method(:start=,:page_start=)
       alias_method(:total,:page_total)
-      alias_method(:total=,:page_total=)
     end
 
-    # Returns the current page calculated from 'rows' and 'start'
+    # Returns the current page calculated from per_page and page_start
     def current_page
-      return 1 if start < 1
+      return 1 if page_start < 1
       per_page_normalized = per_page < 1 ? 1 : per_page
-      @current_page ||= (start / per_page_normalized).ceil + 1
+      @current_page ||= (page_start / per_page_normalized).ceil + 1
     end
 
-    # Calcuates the total pages from 'numFound' and 'rows'
+    # Calcuates the total pages from page_total and per_page
     def total_pages
-      @total_pages ||= per_page > 0 ? (total / per_page.to_f).ceil : 1
+      @total_pages ||= per_page > 0 ? (page_total / per_page.to_f).ceil : 1
     end
 
     # returns the previous page number or 1
